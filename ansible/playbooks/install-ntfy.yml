@@ -1,0 +1,87 @@
+---
+# Install Self-Hosted ntfy.sh
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/install-ntfy.yml
+
+- name: Install ntfy.sh
+  hosts: production
+  become: true
+
+  vars:
+    ntfy_domain: "ntfy.yourdomain.com"
+    ntfy_port: 8080
+
+  tasks:
+    - name: Add ntfy repository key
+      apt_key:
+        url: https://archive.heckel.io/apt/pubkey.txt
+        state: present
+
+    - name: Add ntfy repository
+      apt_repository:
+        repo: "deb https://archive.heckel.io/apt debian main"
+        state: present
+
+    - name: Install ntfy
+      apt:
+        name: ntfy
+        state: present
+        update_cache: yes
+
+    - name: Configure ntfy
+      copy:
+        dest: /etc/ntfy/server.yml
+        content: |
+          base-url: "https://{{ ntfy_domain }}"
+          listen-http: ":{{ ntfy_port }}"
+          behind-proxy: true
+          auth-default-access: "deny-all"
+          cache-file: "/var/cache/ntfy/cache.db"
+          cache-duration: "24h"
+          attachment-cache-dir: "/var/cache/ntfy/attachments"
+      notify: Restart ntfy
+
+    - name: Enable and start ntfy
+      systemd:
+        name: ntfy
+        enabled: yes
+        state: started
+
+    - name: Add nginx config for ntfy
+      copy:
+        dest: /etc/nginx/sites-available/ntfy
+        content: |
+          server {
+              listen 80;
+              server_name {{ ntfy_domain }};
+
+              location / {
+                  proxy_pass http://127.0.0.1:{{ ntfy_port }};
+                  proxy_http_version 1.1;
+                  proxy_set_header Host $host;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_connect_timeout 3m;
+                  proxy_send_timeout 3m;
+                  proxy_read_timeout 3m;
+              }
+          }
+      notify: Reload nginx
+
+    - name: Enable ntfy site
+      file:
+        src: /etc/nginx/sites-available/ntfy
+        dest: /etc/nginx/sites-enabled/ntfy
+        state: link
+      notify: Reload nginx
+
+  handlers:
+    - name: Restart ntfy
+      systemd:
+        name: ntfy
+        state: restarted
+
+    - name: Reload nginx
+      systemd:
+        name: nginx
+        state: reloaded

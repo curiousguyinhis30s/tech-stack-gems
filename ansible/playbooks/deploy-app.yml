@@ -1,0 +1,69 @@
+---
+# Deploy Application Playbook
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/deploy-app.yml -e "app_name=myapp"
+
+- name: Deploy Application
+  hosts: production
+  become: true
+  become_user: deploy
+
+  vars:
+    app_name: "{{ app_name | default('myapp') }}"
+    app_dir: "{{ app_base_dir }}/{{ app_name }}"
+    git_repo: "git@github.com:yourusername/{{ app_name }}.git"
+    git_branch: main
+
+  tasks:
+    - name: Notify deploy starting
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "🚀 Deploying {{ app_name }}..."
+        headers:
+          Title: "Deploy Started"
+      ignore_errors: yes
+
+    - name: Create app directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: deploy
+        group: deploy
+
+    - name: Clone/update repository
+      git:
+        repo: "{{ git_repo }}"
+        dest: "{{ app_dir }}"
+        version: "{{ git_branch }}"
+        force: yes
+      register: git_result
+
+    - name: Install dependencies
+      npm:
+        path: "{{ app_dir }}"
+        production: yes
+      when: git_result.changed
+
+    - name: Build application
+      command: npm run build
+      args:
+        chdir: "{{ app_dir }}"
+      when: git_result.changed
+
+    - name: Restart with PM2
+      command: pm2 restart {{ app_name }} || pm2 start npm --name "{{ app_name }}" -- start
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Save PM2 list
+      command: pm2 save
+
+    - name: Notify deploy complete
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "✅ {{ app_name }} deployed successfully"
+        headers:
+          Title: "Deploy Success"
+          Priority: "high"
+      when: git_result.changed

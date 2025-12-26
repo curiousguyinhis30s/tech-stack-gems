@@ -1,0 +1,78 @@
+---
+# Install Meilisearch Playbook
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/install-meilisearch.yml
+
+- name: Install Meilisearch
+  hosts: production
+  become: true
+
+  vars:
+    meili_version: "v1.10"
+    meili_user: meilisearch
+    meili_dir: /opt/meilisearch
+    meili_data_dir: /var/lib/meilisearch
+
+  tasks:
+    - name: Create meilisearch user
+      user:
+        name: "{{ meili_user }}"
+        system: yes
+        create_home: no
+        shell: /usr/sbin/nologin
+
+    - name: Create directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ meili_user }}"
+        group: "{{ meili_user }}"
+      loop:
+        - "{{ meili_dir }}"
+        - "{{ meili_data_dir }}"
+
+    - name: Download Meilisearch
+      get_url:
+        url: "https://github.com/meilisearch/meilisearch/releases/download/{{ meili_version }}/meilisearch-linux-amd64"
+        dest: "{{ meili_dir }}/meilisearch"
+        mode: '0755'
+
+    - name: Create systemd service
+      copy:
+        dest: /etc/systemd/system/meilisearch.service
+        content: |
+          [Unit]
+          Description=Meilisearch
+          After=network.target
+
+          [Service]
+          User={{ meili_user }}
+          Group={{ meili_user }}
+          ExecStart={{ meili_dir }}/meilisearch --db-path {{ meili_data_dir }} --http-addr 127.0.0.1:{{ meili_port }}
+          Environment=MEILI_MASTER_KEY={{ meili_master_key }}
+          Environment=MEILI_ENV=production
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start Meilisearch
+      systemd:
+        name: meilisearch
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Allow Meilisearch in UFW (local only)
+      ufw:
+        rule: allow
+        port: "{{ meili_port }}"
+        proto: tcp
+        from_ip: 127.0.0.1
+
+    - name: Notify installation complete
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "✅ Meilisearch installed on {{ inventory_hostname }}"
+        headers:
+          Title: "Meilisearch Ready"

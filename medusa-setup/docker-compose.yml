@@ -1,0 +1,137 @@
+Here is a complete, production-ready setup for Medusa v2 using Docker Compose.
+
+This setup defines **3 services**:
+1.  **Postgres**: The database.
+2.  **Redis**: For events and job queues.
+3.  **Medusa**: The backend application.
+
+### 1. The `.env` Template
+
+Save this file as `.env` in the same directory as your `docker-compose.yml`. Medusa requires these variables to run.
+
+```env
+# .env
+
+# Database
+POSTGRES_USER=medusa
+POSTGRES_PASSWORD=medusa_password_change_me
+POSTGRES_DB=medusa-db
+
+# Redis
+REDIS_CONNECTION_URL=redis://redis:6379
+
+# Medusa URLs (Adjust these for your domain in production)
+# MEDUSA_BACKEND_URL is used by plugins/admin to know where the backend is.
+MEDUSA_BACKEND_URL=http://localhost:9000
+MEDUSA_ADMIN_URL=http://localhost:7001
+
+# JWT & Cookies (Generate random strings for production)
+JWT_SECRET=change_me_to_random_string
+COOKIE_SECRET=change_me_to_random_string
+
+# Node Environment
+NODE_ENV=production
+```
+
+### 2. The `docker-compose.yml`
+
+Save this file as `docker-compose.yml`.
+
+```yaml
+version: "3.9"
+
+services:
+  # 1. PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    # Use 'restart: always' for production resilience
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      # Persist database data
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis (Used for EventBus/Job Queue)
+  redis:
+    image: redis:7-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # 3. Medusa Backend v2
+  medusa:
+    # Ensure you use a tagged version (e.g. v2.x.x) or 'latest' for production
+    image: medusajs/medusa:v2.0.0
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database URL
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Redis URL
+      - REDIS_URL=${REDIS_CONNECTION_URL}
+      # URLs
+      - MEDUSA_BACKEND_URL=${MEDUSA_BACKEND_URL}
+      # Ports
+      - PORT=9000
+      # Secrets
+      - JWT_SECRET=${JWT_SECRET}
+      - COOKIE_SECRET=${COOKIE_SECRET}
+      # Admin (Required for v2)
+      - MEDUSA_ADMIN_URL=${MEDUSA_ADMIN_URL}
+    # Standard Port for Medusa
+    ports:
+      - "9000:9000"
+    volumes:
+      # Mount your local files to override container files (optional, for custom code)
+      # - .:/app/src 
+      # If you want to upload files locally (uncomment below)
+      - medusa_uploads:/app/uploads
+
+volumes:
+  postgres_data:
+  medusa_uploads:
+```
+
+### 3. How to Run
+
+1.  **Create the files**:
+    ```bash
+    touch docker-compose.yml .env
+    ```
+    *Paste the content above into the respective files.*
+
+2.  **Update Secrets**:
+    *Before running*, **edit the `.env`** file. Change `JWT_SECRET` and `COOKIE_SECRET` to long, random strings.
+
+3.  **Start the containers**:
+    ```bash
+    docker compose up -d
+    ```
+
+4.  **Initialize the Database**:
+    Since this is a production configuration, Medusa container will start, but the database tables will be empty. You need to run migrations and seed the admin user.
+
+    Run this one-time command inside the running container:
+    ```bash
+    docker compose exec medusa npx medusa db:migrate
+    docker compose exec medusa npx medusa user --email admin@medusa-test.com --password supersecret123
+    ```
+
+5.  **Access**:
+    *   **API**: `http://localhost:9000/store/products`
+    *   **Admin**: You typically will deploy the Admin Dashboard separately (as it is a Node/Next.js app), but you can verify the backend is running via health check or API calls.

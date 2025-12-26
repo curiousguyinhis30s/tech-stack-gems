@@ -1,0 +1,107 @@
+---
+# Rollback Application to Previous Version
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/rollback.yml -e "app_name=myapp" -l staging
+#        ansible-playbook -i inventory/hosts.yml playbooks/rollback.yml -e "app_name=myapp" -l production
+
+- name: Rollback Application
+  hosts: "{{ target_hosts | default('staging') }}"
+  become: true
+
+  vars:
+    app_name: "{{ app_name | default('command-center') }}"
+
+  tasks:
+    # Notify rollback starting
+    - name: Notify rollback starting
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "⏪ Starting {{ app_name }} rollback on {{ env_name }}..."
+        headers:
+          Title: "Rollback Started"
+          Tags: "rewind"
+      ignore_errors: yes
+
+    # Check if backup exists
+    - name: Check for backup
+      stat:
+        path: "{{ app_dir }}/{{ app_name }}.backup"
+      register: backup_exists
+
+    - name: Fail if no backup available
+      fail:
+        msg: "No backup found at {{ app_dir }}/{{ app_name }}.backup. Cannot rollback."
+      when: not backup_exists.stat.exists
+
+    # Read backup timestamp
+    - name: Read backup timestamp
+      slurp:
+        src: "{{ app_dir }}/{{ app_name }}.backup/.backup_timestamp"
+      register: backup_timestamp_file
+      ignore_errors: yes
+
+    - name: Display backup info
+      debug:
+        msg: "Rolling back to backup from: {{ backup_timestamp_file.content | b64decode | default('unknown') }}"
+      when: backup_timestamp_file.content is defined
+
+    # Stop current application
+    - name: Stop current application
+      command: pm2 stop {{ app_name }}-{{ env_name }}
+      ignore_errors: yes
+
+    # Remove current version
+    - name: Remove current version
+      file:
+        path: "{{ app_dir }}/{{ app_name }}"
+        state: absent
+
+    # Restore backup
+    - name: Restore backup
+      command: mv {{ app_dir }}/{{ app_name }}.backup {{ app_dir }}/{{ app_name }}
+
+    # Restart application
+    - name: Restart application
+      command: pm2 restart {{ app_name }}-{{ env_name }}
+      register: restart_result
+
+    # Save PM2 list
+    - name: Save PM2 process list
+      command: pm2 save
+
+    # Wait for app to start
+    - name: Wait for application to start
+      pause:
+        seconds: 5
+
+    # Health check
+    - name: Perform health check after rollback
+      uri:
+        url: "http://localhost:{{ app_port | default(3000) }}/health"
+        status_code: 200
+        timeout: "{{ health_check_timeout }}"
+      register: health_check
+      ignore_errors: yes
+
+    # Notify result
+    - name: Notify rollback success
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "✅ {{ app_name }} rolled back successfully on {{ env_name }}!"
+        headers:
+          Title: "Rollback Success"
+          Tags: "white_check_mark"
+          Priority: "high"
+      when: not health_check.failed
+
+    - name: Notify rollback failure
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "❌ {{ app_name }} rollback on {{ env_name }} completed but health check failed! Manual intervention needed."
+        headers:
+          Title: "Rollback Failed"
+          Tags: "x"
+          Priority: "urgent"
+      when: health_check.failed

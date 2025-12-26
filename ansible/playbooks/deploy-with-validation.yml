@@ -1,0 +1,187 @@
+---
+# Deploy Application with Validation & Rollback
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/deploy-with-validation.yml -e "app_name=myapp" -l staging
+#        ansible-playbook -i inventory/hosts.yml playbooks/deploy-with-validation.yml -e "app_name=myapp" -l production
+
+- name: Deploy Application with Validation
+  hosts: "{{ target_hosts | default('staging') }}"
+  become: true
+
+  vars:
+    app_name: "{{ app_name | default('command-center') }}"
+    git_repo: "git@github.com:samiullahsaleem/{{ app_name }}.git"
+    git_branch: "{{ branch | default('main') }}"
+    app_port: "{{ port | default(3000) }}"
+    run_tests: "{{ tests | default(true) }}"
+
+  pre_tasks:
+    # Notify deploy starting
+    - name: Notify deploy starting
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "🚀 Starting {{ app_name }} deploy to {{ env_name }}..."
+        headers:
+          Title: "Deploy Started"
+          Tags: "rocket"
+      ignore_errors: yes
+
+    # Run tests locally before deploying to production
+    - name: Run local tests before production deploy
+      delegate_to: localhost
+      become: false
+      command: npm test
+      args:
+        chdir: "{{ lookup('env', 'HOME') }}/{{ app_name }}"
+      when:
+        - env_name == 'production'
+        - run_tests | bool
+      register: test_result
+      ignore_errors: yes
+
+    - name: Fail if tests failed for production
+      fail:
+        msg: "Tests failed! Aborting production deployment."
+      when:
+        - env_name == 'production'
+        - run_tests | bool
+        - test_result.rc != 0
+
+    # Create backup of current version
+    - name: Check if app exists
+      stat:
+        path: "{{ app_dir }}/{{ app_name }}"
+      register: app_exists
+
+    - name: Backup current version
+      copy:
+        src: "{{ app_dir }}/{{ app_name }}/"
+        dest: "{{ app_dir }}/{{ app_name }}.backup/"
+        remote_src: yes
+      when: app_exists.stat.exists
+
+    - name: Record backup timestamp
+      copy:
+        content: "{{ ansible_date_time.iso8601 }}"
+        dest: "{{ app_dir }}/{{ app_name }}.backup/.backup_timestamp"
+      when: app_exists.stat.exists
+
+  tasks:
+    # Create app directory
+    - name: Create app directory
+      file:
+        path: "{{ app_dir }}/{{ app_name }}"
+        state: directory
+        mode: '0755'
+
+    # Clone/update repository
+    - name: Clone or update repository
+      git:
+        repo: "{{ git_repo }}"
+        dest: "{{ app_dir }}/{{ app_name }}"
+        version: "{{ git_branch }}"
+        force: yes
+      register: git_result
+
+    # Install dependencies
+    - name: Install npm dependencies
+      npm:
+        path: "{{ app_dir }}/{{ app_name }}"
+        production: yes
+      when: git_result.changed
+
+    # Build application
+    - name: Build application
+      command: npm run build
+      args:
+        chdir: "{{ app_dir }}/{{ app_name }}"
+      when: git_result.changed
+      register: build_result
+
+    # Create/update PM2 ecosystem config
+    - name: Create PM2 ecosystem config
+      template:
+        src: ecosystem.config.js.j2
+        dest: "{{ app_dir }}/{{ app_name }}/ecosystem.config.js"
+      vars:
+        pm2_app_name: "{{ app_name }}-{{ env_name }}"
+        pm2_script: "npm"
+        pm2_args: "start"
+
+    # Restart with PM2
+    - name: Restart application with PM2
+      command: pm2 restart {{ app_name }}-{{ env_name }} || pm2 start ecosystem.config.js
+      args:
+        chdir: "{{ app_dir }}/{{ app_name }}"
+      register: pm2_result
+
+    # Save PM2 process list
+    - name: Save PM2 process list
+      command: pm2 save
+
+  post_tasks:
+    # Wait for app to start
+    - name: Wait for application to start
+      pause:
+        seconds: 5
+
+    # Health check
+    - name: Perform health check
+      uri:
+        url: "http://localhost:{{ app_port }}/health"
+        status_code: 200
+        timeout: "{{ health_check_timeout }}"
+      register: health_check
+      ignore_errors: yes
+
+    # Rollback if health check fails
+    - name: Rollback on health check failure
+      block:
+        - name: Stop failed deployment
+          command: pm2 stop {{ app_name }}-{{ env_name }}
+          ignore_errors: yes
+
+        - name: Restore backup
+          command: mv {{ app_dir }}/{{ app_name }}.backup {{ app_dir }}/{{ app_name }}
+          when: app_exists.stat.exists
+
+        - name: Restart from backup
+          command: pm2 restart {{ app_name }}-{{ env_name }}
+          when: app_exists.stat.exists
+
+        - name: Notify rollback
+          uri:
+            url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+            method: POST
+            body: "⚠️ ROLLBACK: {{ app_name }} deploy to {{ env_name }} failed health check. Reverted to previous version."
+            headers:
+              Title: "Deploy Rollback"
+              Tags: "warning"
+              Priority: "high"
+          ignore_errors: yes
+
+        - name: Fail with rollback message
+          fail:
+            msg: "Deployment failed health check. Rolled back to previous version."
+      when: health_check.failed
+
+    # Success notification
+    - name: Notify deploy success
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "✅ {{ app_name }} deployed successfully to {{ env_name }}!"
+        headers:
+          Title: "Deploy Success"
+          Tags: "white_check_mark"
+          Priority: "{{ 'high' if env_name == 'production' else 'default' }}"
+      when: not health_check.failed
+
+    # Clean up old backup (keep for 24h just in case)
+    - name: Schedule backup cleanup
+      cron:
+        name: "cleanup {{ app_name }} backup"
+        minute: "0"
+        hour: "*/24"
+        job: "rm -rf {{ app_dir }}/{{ app_name }}.backup"
+        state: present

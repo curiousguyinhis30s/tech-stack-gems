@@ -1,0 +1,338 @@
+Here is a production-ready `docker-compose.yml` setup. This configuration assumes you want **Medusa** (Headless Commerce) to handle user authentication via **Authentik** (SSO) and utilize **PostgreSQL** for its core data, while running **PocketBase** as a separate service (which can serve as a CMS or handle separate B2B logic).
+
+### Architecture Overview
+1.  **Medusa (v2):** The main commerce backend. Uses the `@medusajs/auth-authentik` strategy.
+2.  **Authentik:** Identity Provider handling user logins.
+3.  **PostgreSQL:** Shared database server. Two databases are created: `medusa_db` and `pocketbase_db`.
+4.  **Redis:** Shared caching and job queue for Medusa.
+5.  **Caddy (Reverse Proxy):** A critical addition for production. It handles SSL termination and routes traffic.
+    *   `app.yourdomain.com` -> Medusa
+    *   `auth.yourdomain.com` -> Authentik
+    *   `pb.yourdomain.com` -> PocketBase
+
+---
+
+### 1. The `.env` Template
+Save this as `.env`. Update the values, especially the domains and passwords.
+
+```properties
+# .env
+# =============================================================================
+# GENERAL SETTINGS
+# =============================================================================
+DOMAIN=yourdomain.com
+# Default email for Admin setup
+ADMIN_EMAIL=admin@example.com
+# Generate strong secrets using: openssl rand -base64 32
+MEDUSA_JWT_SECRET=CHANGE_ME_MEDUSA_SECRET
+COOKIE_SECRET=CHANGE_ME_COOKIE_SECRET
+AUTHENTIK_SECRET=CHANGE_ME_AUTHENTIK_SECRET
+
+# =============================================================================
+# POSTGRESQL (Shared DB)
+# =============================================================================
+POSTGRES_USER=postgres_user
+POSTGRES_PASSWORD=STRONG_DB_PASSWORD
+# Medusa DB Name
+MEDUSA_DB_NAME=medusa_prod
+# PocketBase DB Name (must be unique)
+PB_DB_NAME=pocketbase_prod
+
+# =============================================================================
+# REDIS
+# =============================================================================
+REDIS_URI=redis://redis:6379
+
+# =============================================================================
+# MEDUSA SETTINGS
+# =============================================================================
+MEDUSA_URL=http://medusa:9000
+# This must match the domain used to access Medusa (Public URL)
+MEDUSA_PUBLIC_URL=https://app.${DOMAIN}
+MEDUSA_ADMIN_CORS=https://app.${DOMAIN},https://${DOMAIN}
+MEDUSA_STORE_CORS=https://app.${DOMAIN},https://${DOMAIN}
+
+# =============================================================================
+# AUTHENTIK (SSO)
+# =============================================================================
+# Authentik needs to know its public URL to generate valid callbacks
+AUTHENTIK_PUBLIC_URL=https://auth.${DOMAIN}
+# Disable error reporting during setup
+AUTHENTIK_ERROR_REPORTING_ENABLED=false
+
+# =============================================================================
+# POCKETBASE
+# =============================================================================
+# PocketBase serves HTTP on 8090
+POCKETBASE_URL=http://pocketbase:8090
+```
+
+---
+
+### 2. `docker-compose.yml`
+
+Save this file as `docker-compose.yml`.
+
+```yaml
+version: '3.8'
+
+services:
+  # =========================================================================
+  # REVERSE PROXY (Caddy) - Handles SSL & Routing
+  # =========================================================================
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - core_network
+
+  # =========================================================================
+  # DATABASES
+  # =========================================================================
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Creates two separate databases upon initialization
+      POSTGRES_DB: ${MEDUSA_DB_NAME}
+    # We use a script to ensure the second DB is created if it doesn't exist
+    entrypoint:
+      - bash
+      - -c
+      - |
+        docker-entrypoint-postgres.sh &
+        sleep 5
+        psql -U $$POSTGRES_USER -tc "SELECT 1 FROM pg_database WHERE datname = '$$PB_DB_NAME'" | grep -q 1 || psql -U $$POSTGRES_USER -c "CREATE DATABASE $$PB_DB_NAME"
+        wait
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - core_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks:
+      - core_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # =========================================================================
+  # AUTHENTIK (Identity Provider)
+  # =========================================================================
+  postgresql-authentik:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_SECRET}
+      POSTGRES_DB: authentik
+    volumes:
+      - authentik_db:/var/lib/postgresql/data
+    networks:
+      - core_network
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.4.1 # Pin specific version for production
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET}
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql-authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_SECRET}
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING_ENABLED}
+      # Authentik needs to know its external URL
+      AUTHENTIK_EMAIL__HOST: ${AUTHENTIK_PUBLIC_URL}
+    volumes:
+      - ./media:/media
+      - ./custom-templates:/templates
+      - authentik_media:/media
+    networks:
+      - core_network
+    depends_on:
+      - postgresql-authentik
+      - redis
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.4.1
+    restart: unless-stopped
+    command: worker
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET}
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql-authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_SECRET}
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_ERROR_REPORTING__ENABLED: ${AUTHENTIK_ERROR_REPORTING_ENABLED}
+    user: root
+    volumes:
+      - ./media:/media
+      - ./custom-templates:/templates
+      - authentik_media:/media
+    networks:
+      - core_network
+    depends_on:
+      - postgresql-authentik
+      - redis
+
+  # =========================================================================
+  # APPLICATIONS
+  # =========================================================================
+
+  medusa:
+    image: medusajs/medusa:v2.0.3 # Ensure tag matches Medusa v2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${MEDUSA_DB_NAME}"
+      REDIS_URL: ${REDIS_URI}
+      # JWT and Cookies
+      JWT_SECRET: ${MEDUSA_JWT_SECRET}
+      COOKIE_SECRET: ${COOKIE_SECRET}
+      # URLs
+      MEDUSA_BACKEND_URL: ${MEDUSA_PUBLIC_URL}
+      MEDUSA_STORE_URL: ${MEDUSA_PUBLIC_URL}
+    networks:
+      - core_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Medusa v2 is a build step. In prod, you might build a custom image
+    # with the authentik plugin pre-installed. 
+    # For this stack, we assume the plugin is installed or we mount code.
+    # Uncomment below if developing locally:
+    # volumes:
+    #   - ./medusa-src:/app
+
+  pocketbase:
+    image: spectype/pocketbase:latest # Unofficial image is reliable, or build your own
+    restart: unless-stopped
+    environment:
+      # PocketBase doesn't use env vars for DB connection string, it uses flags or mounts.
+      # We will pass the URL via command args based on env.
+    command: >
+      --serve
+      --http 0.0.0.0:8090
+    networks:
+      - core_network
+    volumes:
+      - pb_data:/pb_data # Mount data persistence
+    # Note: PocketBase doesn't support Postgres natively. 
+    # It uses SQLite on the internal volume. 
+    # If you MUST use Postgres with PB, you need a specific build.
+    # This config treats PB as a separate isolated app using its internal DB.
+
+networks:
+  core_network:
+    driver: bridge
+
+volumes:
+  pg_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  authentik_db:
+    driver: local
+  authentik_media:
+    driver: local
+  pb_data:
+    driver: local
+```
+
+---
+
+### 3. Caddy Configuration (Reverse Proxy)
+Create a file named `Caddyfile` in a folder named `caddy` next to your compose file.
+
+```caddy
+# caddy/Caddyfile
+
+{
+    email admin@yourdomain.com
+}
+
+# Authentik
+auth.{$DOMAIN} {
+    reverse_proxy authentik-server:9000
+}
+
+# Medusa Backend
+app.{$DOMAIN} {
+    reverse_proxy medusa:9000
+}
+
+# PocketBase
+pb.{$DOMAIN} {
+    reverse_proxy pocketbase:8090
+}
+```
+
+---
+
+### 4. Integration Instructions
+
+Since this is a "production-ready" stack, you cannot simply run `docker-compose up` and have everything talk to each other magically. You must configure the providers.
+
+#### Step 1: Start the Stack
+```bash
+docker-compose up -d
+```
+Wait for images to pull and services to start.
+
+#### Step 2: Configure Authentik
+1.  Go to `https://auth.yourdomain.com` (if DNS is set) or `http://localhost:9000` (if testing locally with port mapping).
+2.  Complete the setup wizard (create admin user).
+3.  **Create Application:**
+    *   Go to **Admin** -> **Applications** -> **Create**.
+    *   Name: `Medusa`.
+    *   Slug: `medusa`.
+    *   Type: **Provider (OAuth2/OpenID)**.
+    *   Redirect URIs: `https://app.yourdomain.com/auth/authentik/callback` (This assumes you have installed the Medusa Authentik plugin).
+
+#### Step 3: Configure Medusa
+You need to install the Authentik authentication plugin in your Medusa project. If you are using the official Docker image, you will likely need to create a custom `Dockerfile` to install the npm package `@medusajs/auth-authentik`.
+
+Add to your Medusa `config.json`:
+```json
+{
+  "modules": {
+    "auth": {
+      "authentik": {
+        "domain": "https://auth.yourdomain.com",
+        "clientId": "YOUR_CLIENT_ID_FROM_AUTHENTIK",
+        "clientSecret": "YOUR_CLIENT_SECRET_FROM_AUTHENTIK",
+        "callbackUrl": "https://app.yourdomain.com/auth/authentik/callback"
+      }
+    }
+  }
+}
+```
+
+### Important Considerations
+1.  **Cron Jobs:** Medusa relies heavily on cron jobs for order processing. In Docker, you usually need to run a separate "worker" container or define a cron entrypoint in your Medusa service definition to handle `medusa execute`.
+2.  **PocketBase Persistence:** PocketBase stores data in `pb_data`. I have mapped this to a Docker volume. Note that PocketBase uses SQLite internally, so it does not actually connect to the PostgreSQL service defined in this stack, keeping it lightweight and independent.
+3.  **DNS:** For SSL (Caddy) to work automatically, the domains in `.env` must point to the server IP.

@@ -1,0 +1,99 @@
+---
+# VPS Initial Setup Playbook
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/setup-vps.yml
+
+- name: Setup VPS with Battle-Tested Stack
+  hosts: production
+  become: true
+
+  vars:
+    deploy_user: deploy
+    ssh_port: 22
+    packages:
+      - git
+      - curl
+      - htop
+      - tmux
+      - nginx
+      - ufw
+
+  tasks:
+    # System Updates
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+
+    # Security
+    - name: Install essential packages
+      apt:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Configure UFW defaults
+      ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: incoming, policy: deny }
+        - { direction: outgoing, policy: allow }
+
+    - name: Allow SSH
+      ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+
+    - name: Allow HTTP/HTTPS
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - 80
+        - 443
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    # Create deploy user
+    - name: Create deploy user
+      user:
+        name: "{{ deploy_user }}"
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+
+    - name: Add SSH key for deploy user
+      authorized_key:
+        user: "{{ deploy_user }}"
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    # Node.js
+    - name: Install Node.js repository
+      shell: curl -fsSL https://deb.nodesource.com/setup_{{ node_version }}.x | bash -
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+
+    - name: Install PM2 globally
+      npm:
+        name: pm2
+        global: yes
+
+    # Notification on completion
+    - name: Notify setup complete
+      uri:
+        url: "{{ ntfy_server }}/{{ ntfy_topic }}"
+        method: POST
+        body: "✅ VPS setup complete: {{ inventory_hostname }}"
+        headers:
+          Title: "Ansible Complete"
+          Priority: "high"

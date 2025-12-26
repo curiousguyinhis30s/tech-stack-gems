@@ -1,0 +1,149 @@
+Here is a complete, minimal setup for Authentik suitable for a small team.
+
+### Prerequisites
+1.  Create a folder for your project.
+2.  Create a `.env` file (content provided below).
+3.  Ensure you generate secure passwords and keys.
+
+---
+
+### 1. The Environment File (`.env`)
+Save this as `.env` in the same directory as your compose file.
+
+```bash
+# --- Authentik Configuration ---
+# Generate a secure random key. Example: python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'
+AUTHENTIK_SECRET_KEY=please-change-me-to-something-random
+
+# Disable error reporting (sends data to authentik devs), set to true if you want to support them
+AUTHENTIK_ERROR_REPORTING_ENABLED=false  
+
+# --- PostgreSQL Configuration ---
+# Match these with the database service credentials below
+PG_USER=authentik
+PG_PASSWORD=your-super-secure-postgres-password
+PG_DB=authentik
+PG_HOST=postgres-db
+PG_PORT=5432
+
+# --- Redis Configuration ---
+REDIS_HOST=redis-server
+```
+
+---
+
+### 2. Docker Compose File (`docker-compose.yml`)
+
+Save this as `docker-compose.yml`.
+
+```yaml
+---
+version: "3.8"
+
+services:
+  # 1. PostgreSQL Database
+  db:
+    image: docker.io/postgres:15-alpine
+    container_name: authentik-db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  # 2. Redis Cache
+  redis:
+    image: docker.io/redis:alpine
+    container_name: authentik-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 3. Authentik Server
+  server:
+    image: docker.io/goauthentik/server:latest
+    container_name: authentik-server
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING_ENABLED: ${AUTHENTIK_ERROR_REPORTING_ENABLED}
+      AUTHENTIK_POSTGRESQL__HOST: db
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASSWORD}
+      AUTHENTIK_REDIS__HOST: redis
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - media-data:/media
+      - custom-templates:/templates
+    depends_on:
+      - db
+      - redis
+
+  # 4. Authentik Worker (Crucial for background tasks)
+  worker:
+    image: docker.io/goauthentik/server:latest
+    container_name: authentik-worker
+    restart: unless-stopped
+    command: worker
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING_ENABLED: ${AUTHENTIK_ERROR_REPORTING_ENABLED}
+      AUTHENTIK_POSTGRESQL__HOST: db
+      AUTHENTIK_POSTGRESQL__NAME: ${PG_DB}
+      AUTHENTIK_POSTGRESQL__USER: ${PG_USER}
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${PG_PASSWORD}
+      AUTHENTIK_REDIS__HOST: redis
+    # User needs to match the server user to access media files
+    user: root
+    volumes:
+      - media-data:/media
+      - custom-templates:/templates
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Optional: for Docker-based outposts
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  db-data:
+    driver: local
+  media-data:
+    driver: local
+  custom-templates:
+    driver: local
+```
+
+### How to run
+
+1.  **Start the containers:**
+    ```bash
+    docker compose up -d
+    ```
+2.  **Wait for startup:** It may take 1-2 minutes for the database migrations to run.
+3.  **Access the UI:**
+    *   Go to `https://<your-ip>:9443` (You will see a certificate warning, which is normal for the default self-signed cert).
+    *   Or `http://<your-ip>:9000` (if using HTTP for testing).
+4.  **Initial Login:**
+    *   Username: `akadmin`
+    *   Password: Check the logs of the server container to find the automatically generated password:
+        ```bash
+        docker compose logs server | grep 'Pod initial password'
+        ```
+
+### Notes on "Minimal" Setup
+*   **Worker:** The `worker` service is included. It is required for background tasks (like clearing logs, calculating policies, or updating GeoIP databases). Do not remove it.
+*   **Port Mapping:** This setup exposes the HTTP (9000) and HTTPS (9443) ports directly.
+*   **Email:** Authentik needs an SMTP server to send emails (e.g., password resets). You can configure this later in the Admin UI under *System -> Mail*.

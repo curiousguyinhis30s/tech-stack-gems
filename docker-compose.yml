@@ -1,0 +1,52 @@
+# Local Development Stack
+# Run: docker-compose up -d
+#
+# Services:
+#   - Meilisearch: http://localhost:7700
+#   - ntfy.sh: http://localhost:8080
+#   - PocketBase: http://localhost:8090
+
+version: '3.8'
+
+services:
+  # Search Engine
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    container_name: meili
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY:-dev-master-key}
+      - MEILI_ENV=development
+    volumes:
+      - meili_data:/meili_data
+    restart: unless-stopped
+
+  # Push Notifications (self-hosted)
+  ntfy:
+    image: binwiederhier/ntfy
+    container_name: ntfy
+    ports:
+      - "8080:80"
+    environment:
+      - NTFY_BASE_URL=http://localhost:8080
+    volumes:
+      - ntfy_cache:/var/cache/ntfy
+    command: serve
+    restart: unless-stopped
+
+  # PocketBase (optional - for testing)
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    container_name: pocketbase
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb/pb_data
+      - ./pb_hooks:/pb/pb_hooks
+    restart: unless-stopped
+
+volumes:
+  meili_data:
+  ntfy_cache:
+  pb_data:

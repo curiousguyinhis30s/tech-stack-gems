@@ -1,0 +1,239 @@
+This is a complete, production-ready setup for PocketBase using Docker Compose.
+
+### Prerequisites
+*   **Domain Name:** You need a domain (e.g., `example.com`) pointed to your server's IP.
+*   **S3 Bucket:** Create a bucket and an Access Key/Secret in AWS S3, MinIO, or DigitalOcean Spaces.
+
+### 1. Project Structure
+Create a folder for your project and set up this structure:
+```text
+pocketbase-prod/
+├── docker-compose.yml
+├── .env
+├── nginx/
+│   └── conf.d/
+│       └── pocketbase.conf
+└── data/
+    └── (created automatically by docker)
+```
+
+---
+
+### 2. The Environment File (.env)
+Create a `.env` file in the root folder. Replace the values with your own.
+
+```ini
+# --- PocketBase Configuration ---
+PB_VERSION=0.22.20
+
+# --- NGINX / SSL ---
+DOMAIN=example.com
+EMAIL=admin@example.com # Used for Let's Encrypt alerts
+
+# --- Redis Configuration ---
+# Optional: Set a password for Redis
+REDIS_PASSWORD=your_strong_redis_password
+
+# --- AWS S3 / MinIO Backup Configuration ---
+# Schedule: Daily at 3 AM (UTC)
+BACKUP_SCHEDULE="0 3 * * *"
+
+# AWS S3 Credentials
+S3_ENDPOINT=https://s3.amazonaws.com
+S3_BUCKET=your-pb-backups
+S3_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE
+S3_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+S3_REGION=us-east-1
+```
+
+---
+
+### 3. Docker Compose (docker-compose.yml)
+This configuration includes:
+1.  **Nginx Proxy Manager:** Handles SSL termination and reverse proxying (easiest way to manage SSL in Docker).
+2.  **PocketBase:** The main application.
+3.  **Redis:** For caching/stores.
+4.  **Backup Worker:** A sidecar container that watches the SQLite database and uploads changes to S3.
+
+```yaml
+services:
+  # 1. NGINX Proxy Manager (Handles SSL & Reverse Proxy)
+  proxy:
+    image: 'jc21/nginx-proxy-manager:latest'
+    restart: unless-stopped
+    ports:
+      - '80:80'   # Required for Let's Encrypt HTTP-01 challenge
+      - '443:443' # HTTPS
+      - '81:81'   # Management UI (Initial setup)
+    environment:
+      DB_SQLITE_FILE: "/data/database.sqlite"
+    volumes:
+      - ./data/nginx:/data
+      - ./data/letsencrypt:/etc/letsencrypt
+    networks:
+      - pocketbase_net
+
+  # 2. PocketBase Application
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    # OR use standard image: image: spectado/pocketbase:latest
+    container_name: pocketbase
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      # If you have a specific Cache URL logic in your app, inject Redis here
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+    volumes:
+      - ./data/pb_data:/pb_data
+      - ./data/pb_public:/pb_public
+    # Healthcheck to ensure PB is running
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - pocketbase_net
+    # Uncomment if you want to access PocketBase directly without proxy (Dev/Debug)
+    # Only expose port 8090 internally behind proxy
+    expose:
+      - "8090"
+
+  # 3. Redis Cache
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./data/redis:/data
+    networks:
+      - pocketbase_net
+
+  # 4. Automated S3 Backup Worker
+  backup:
+    image: eugenmayer/s3sync:latest
+    restart: unless-stopped
+    environment:
+      # Schedule (Cron)
+      SCHEDULE: ${BACKUP_SCHEDULE}
+      
+      # Source (Where PocketBase saves the DB)
+      DATA_DIR: /pb_data
+      
+      # S3 Target
+      S3_REGION: ${S3_REGION}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      
+      # Sync Options (delete files in S3 that don't exist locally? No, keep backup)
+      # AWS cli flags
+      S3_OPTIONS: "--acl private"
+      
+    volumes:
+      - ./data/pb_data:/pb_data:ro # Read-only access to backup data
+    networks:
+      - pocketbase_net
+    # Dependency ensures backup doesn't run before PB creates data
+    depends_on:
+      - pocketbase
+
+networks:
+  pocketbase_net:
+    driver: bridge
+
+volumes:
+  data:
+```
+
+---
+
+### 4. Nginx Configuration (Manual Approach)
+*Note: Since we are using Nginx Proxy Manager above, you typically configure SSL via the UI (Port 81). However, if you prefer a raw `nginx.conf` file (e.g., using `nginx:alpine` directly instead of the Proxy Manager), use the file below.*
+
+**If using the Docker Compose above, skip this section.** If you want to replace the `proxy` service with a custom config, use this `nginx/conf.d/pocketbase.conf`:
+
+```nginx
+# Upstream definition for PocketBase
+upstream pocketbase {
+    server pocketbase:8090;
+}
+
+# HTTP Server - Redirect to HTTPS
+server {
+    listen 80;
+    server_name example.com www.example.com;
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS Server
+server {
+    listen 443 ssl http2;
+    server_name example.com www.example.com;
+
+    # SSL Configuration
+    ssl_certificate /etc/nginx/ssl/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/live/example.com/privkey.pem;
+    
+    # Security Headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # PocketBase Proxy
+    location / {
+        proxy_pass http://pocketbase;
+        
+        # WebSocket upgrades (Crucial for PocketBase Realtime)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Standard Proxy Headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+```
+
+---
+
+### 5. Setup Instructions
+
+1.  **Start the stack:**
+    ```bash
+    docker-compose up -d
+    ```
+2.  **Configure SSL (Nginx Proxy Manager Method):**
+    *   Go to `http://YOUR_SERVER_IP:81`.
+    *   **Default Login:** `admin@example.com` / `changeme`.
+    *   **Add Proxy Host:**
+        *   **Domain:** `example.com`
+        *   **Forward Hostname/IP:** `pocketbase` (This is the Docker service name)
+        *   **Forward Port:** `8090`
+        *   **Cache Assets:** Enable (Recommended)
+        *   **Block Common Exploits:** Enable
+        *   **Websocket Support:** **ENABLE (Required for PocketBase Realtime)**
+    *   **Add SSL:**
+        *   Select the "SSL" tab.
+        *   Request a new SSL Certificate (Let's Encrypt).
+        *   Force SSL = ON.
+
+### Production Considerations
+1.  **Redis:** This setup deploys Redis, but PocketBase does not use it automatically. You must implement caching logic within your PocketBase Go extensions (embedding) or use it in your frontend app logic.
+2.  **Backups:** The `backup` service runs daily. To test, bring the container down and check the S3 bucket.
+3.  **Persistence:** All data is stored in the `./data` folder on your host machine. Ensure you mount a volume to this location if you want to persist data across container recreation (included in the compose file).
