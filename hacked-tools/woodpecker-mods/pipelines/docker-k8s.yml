@@ -1,0 +1,63 @@
+# Woodpecker CI: Docker Build + Kubernetes Deploy
+when:
+  event:
+    - push
+  branch:
+    - main
+    - master
+
+# Required secrets:
+# DOCKER_USERNAME, DOCKER_PASSWORD, KUBE_CONFIG
+
+steps:
+  build:
+    image: node:20-alpine
+    commands:
+      - npm ci
+      - npm run build
+      - npm run test
+
+  docker-build:
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      repo: ${DOCKER_REPO}
+      tags:
+        - latest
+        - ${CI_COMMIT_SHA:0:8}
+      username:
+        from_secret: docker_username
+      password:
+        from_secret: docker_password
+    depends_on:
+      - build
+
+  deploy-k8s:
+    image: bitnami/kubectl:latest
+    commands:
+      - mkdir -p /root/.kube
+      - echo "$KUBE_CONFIG" | base64 -d > /root/.kube/config
+      - kubectl set image deployment/${APP_NAME} ${APP_NAME}=${DOCKER_REPO}:${CI_COMMIT_SHA:0:8} -n ${K8S_NAMESPACE}
+      - kubectl rollout status deployment/${APP_NAME} -n ${K8S_NAMESPACE}
+    secrets: [kube_config]
+    depends_on:
+      - docker-build
+
+---
+# Woodpecker CI: Ansible Deployment
+when:
+  event:
+    - push
+  branch:
+    - main
+
+steps:
+  ansible-deploy:
+    image: plugins/ansible:1
+    settings:
+      inventory: inventory/hosts.yml
+      playbook: playbooks/deploy.yml
+      galaxy: requirements.yml
+      ssh_key:
+        from_secret: ansible_ssh_key
+      vault_password:
+        from_secret: ansible_vault_pass

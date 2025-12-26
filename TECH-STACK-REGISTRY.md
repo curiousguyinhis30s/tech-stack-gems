@@ -140,6 +140,42 @@ Each technology entry includes:
 | shadcn/ui | active | core | Component library. |
 | CSS Modules | active | optional | Scoped CSS. |
 
+### Design Systems & Component Libraries
+
+| Technology | Status | Priority | Hackability | Notes |
+|------------|--------|----------|-------------|-------|
+| **shadcn/ui** | active | core | 10/10 | Copy-paste components. NOT npm. Full ownership. |
+| **Radix UI** | active | core | 9/10 | Headless primitives. ARIA-compliant. shadcn foundation. |
+| **Ark UI** | evaluating | optional | 9/10 | Chakra team. State machines. Multi-framework. |
+| Headless UI | active | optional | 8/10 | Tailwind Labs. Fewer components than Radix. |
+| React Aria | evaluating | optional | 7/10 | Adobe. Most accessible. Complex API. |
+| Kobalte | evaluating | optional | 9/10 | SolidJS only. Radix alternative for Solid. |
+
+**Recommended Stack:**
+```
+shadcn/ui (copy-paste) → Radix (primitives) → Tailwind (styling)
+```
+
+- **Design Systems Research**: `~/tech-stack-gems/research/design-systems.md`
+
+### Animation Libraries
+
+| Technology | Status | Priority | Hackability | Notes |
+|------------|--------|----------|-------------|-------|
+| **Framer Motion** | active | core | 9/10 | React standard. Layout animations. 130KB. |
+| **GSAP** | evaluating | preferred | 10/10 | ScrollTrigger, morphing. Pro features. 60KB. |
+| **Motion One** | evaluating | optional | 7/10 | WAAPI wrapper. 18KB. Native performance. |
+| **React Spring** | active | optional | 9/10 | Physics-based. Gesture support. 25KB. |
+| **Auto-animate** | active | optional | 3/10 | Zero config. 4KB. Limited control. |
+| Lottie | active | optional | 5/10 | After Effects → JSON. Vector animations. |
+
+**Recommended Stack:**
+```
+Framer Motion (React layouts) + GSAP (scroll/complex) + Motion One (micro)
+```
+
+- **Animation Research**: `~/tech-stack-gems/research/animation-libraries.md`
+
 ---
 
 ## AI DEVELOPMENT TOOLS
@@ -227,10 +263,16 @@ Each technology entry includes:
 
 ### CDN & Edge
 
-| Technology | Status | Priority | Notes |
-|------------|--------|----------|-------|
-| Cloudflare | active | core | DNS, CDN, protection. |
-| **Fly.io** | evaluating | preferred | Elixir deployment. Global. |
+| Technology | Status | Priority | Hackability | Notes |
+|------------|--------|----------|-------------|-------|
+| **Cloudflare R2 + Workers** | learning | preferred | 10/10 | Edge computing, image transform, zero egress. |
+| Cloudflare | active | core | 7/10 | DNS, CDN, protection. |
+| **BunnyCDN** | evaluating | optional | 7/10 | High-volume media. Storage API. Cheap. |
+| **Caddy** | learning | preferred | 8/10 | Self-hosted. Auto-HTTPS. JSON API config. |
+| **Varnish** | evaluating | optional | 9/10 | Self-hosted. VCL scripting. Complex caching. |
+| **Fly.io** | evaluating | optional | 6/10 | Elixir deployment. Global edge. |
+
+- **CDN Research**: `~/tech-stack-gems/research/cdn-tools.md`
 
 ### Object Storage
 
@@ -579,6 +621,52 @@ Full stack integration for unified auth across all services.
 
 ---
 
+## AUDIO/VIDEO PROCESSING
+
+| Technology | Status | Priority | Hackability | Category | Notes |
+|------------|--------|----------|-------------|----------|-------|
+| **FFmpeg** | active | core | 10/10 | Transcoding | THE foundation. Format conversion, filters. |
+| **GStreamer** | learning | preferred | 9/10 | Streaming | Real-time pipelines. WebRTC. Plugin arch. |
+| **Faster-Whisper** | learning | core | 9/10 | Speech-to-Text | Local transcription. GPU accelerated. |
+| **yt-dlp** | active | core | 8/10 | Archiving | Video downloads. youtube-dl fork. |
+| **Vosk** | evaluating | optional | 8/10 | STT | Lightweight. Runs on Raspberry Pi. |
+| **Piper TTS** | learning | preferred | 8/10 | Text-to-Speech | Fast neural TTS. 40+ voices. |
+| **MLT** | evaluating | optional | 7/10 | Editing | Kdenlive/Shotcut engine. Automated editing. |
+| MediaPipe | evaluating | optional | 8/10 | AI Vision | Face/pose detection. Google. |
+
+**Recommended Audio/Video Stack:**
+```
+FFmpeg (transcode) → GStreamer (real-time) → Faster-Whisper (transcribe)
+yt-dlp (archive) → Piper (TTS) → MLT (edit)
+```
+
+- **Audio/Video Research**: `~/tech-stack-gems/research/audio-video-tools.md`
+
+---
+
+## HACKABLE EDITORS & DEV TOOLS
+
+| Technology | Status | Priority | Hackability | Category | Notes |
+|------------|--------|----------|-------------|----------|-------|
+| **Helix** | learning | preferred | 8/10 | Editor | Rust. Kakoune-like. LSP native. Modal. |
+| **Kakoune** | evaluating | optional | 9/10 | Editor | Multiple selections. C++. Unix philosophy. |
+| **Zed** | evaluating | optional | 7/10 | Editor | Rust. GPU-rendered. Collaborative. |
+| **Zellij** | learning | preferred | 10/10 | Terminal Mux | Rust. Tmux replacement. WASM plugins. |
+| **Nix** | learning | preferred | 10/10 | Package Mgmt | Reproducible builds. Declarative. |
+| **Aider** | active | core | 9/10 | AI Coding | Terminal pair programming. Multi-model. |
+| **Bun** | active | core | 8/10 | JS Runtime | Fast npm/node replacement. All-in-one. |
+| **Rye** | evaluating | optional | 9/10 | Python Mgmt | Rust-based. pyenv+pip+venv replacement. |
+
+**Recommended Dev Stack:**
+```
+Helix/Zed (editor) → Zellij (terminal) → Nix (packages)
+Aider (AI pair) → Bun (JS) → Rye (Python)
+```
+
+- **Hackable Editors Research**: `~/tech-stack-gems/research/hackable-editors-tools.md`
+
+---
+
 ## LEARNING QUEUE
 
 Technologies to learn in order:
@@ -593,6 +681,10 @@ Technologies to learn in order:
 8. **Meilisearch** - Search
 9. **ZFS** - Filesystem
 10. **Ansible** - Config management (NOT testing)
+11. **FFmpeg/GStreamer** - Audio/video processing
+12. **Faster-Whisper** - Local speech-to-text
+13. **Helix/Zellij** - Modern terminal workflow
+14. **Nix** - Reproducible package management
 
 ---
 
@@ -650,6 +742,27 @@ When making technology recommendations:
 
 ---
 
-*Registry Version: 1.0*
-*Last Updated: 2024-12-25*
+## HACKED-TOOLS LIBRARY
+
+Custom enhancement modules for hackable tools.
+
+**Location**: `~/tech-stack-gems/hacked-tools/`
+
+| Directory | Tool | Enhancements |
+|-----------|------|--------------|
+| `activepieces-mods/` | Activepieces | Webhook factory, n8n migration |
+| `formbricks-mods/` | Formbricks | Conditional logic engine |
+| `calcom-mods/` | Cal.com | Resource scheduler, team availability |
+| `novu-mods/` | Novu | Template builder (planned) |
+| `growthbook-mods/` | GrowthBook | Visual editor (planned) |
+| `semgrep-rules/` | Semgrep | Custom SAST rules (API, React, Node) |
+| `nuclei-templates/` | Nuclei | Custom DAST templates |
+| `trufflehog-mods/` | TruffleHog | Custom secret detectors |
+| `woodpecker-mods/` | Woodpecker CI | Monorepo + K8s pipelines |
+| `uptime-kuma-mods/` | Uptime Kuma | SLA reports, multi-region, alerts |
+
+---
+
+*Registry Version: 2.0*
+*Last Updated: 2025-12-26*
 *Owner: Command Center / AI OS*

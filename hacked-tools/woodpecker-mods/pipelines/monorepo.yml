@@ -1,0 +1,45 @@
+# Woodpecker CI: Monorepo with pnpm workspaces
+when:
+  event:
+    - pull_request
+    - push
+
+variables:
+  PNPM_STORE: .pnpm-store
+
+steps:
+  install-deps:
+    image: node:20-alpine
+    commands:
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm config set store-dir ${PNPM_STORE}
+      - pnpm install --frozen-lockfile
+
+  build-filtered:
+    image: node:20-alpine
+    commands:
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      # Build only affected packages
+      - pnpm -r --filter='...[${CI_COMMIT_SHA}]' run build
+    depends_on:
+      - install-deps
+
+  test-filtered:
+    image: node:20-alpine
+    commands:
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm -r --filter='...[${CI_COMMIT_SHA}]' run test
+    depends_on:
+      - build-filtered
+
+  lint:
+    image: node:20-alpine
+    commands:
+      - corepack enable
+      - corepack prepare pnpm@latest --activate
+      - pnpm -r --filter='...[${CI_COMMIT_SHA}]' run lint
+    depends_on:
+      - install-deps

@@ -1,0 +1,72 @@
+[
+  {
+    "name": "Internal API Endpoint",
+    "description": "Detects internal/private API endpoints",
+    "pattern": "\\b(api\\.internal\\.|internal-api\\.|api\\.dev\\.|\\.internal\\.)([a-z0-9\\-\\.]+\\.[a-z]{2,})\\b",
+    "keywords": ["api.internal", "internal-api", "api.dev"],
+    "tags": ["api", "endpoint", "internal"]
+  },
+  {
+    "name": "Staging URL",
+    "description": "Detects staging/pre-production environment URLs",
+    "pattern": "\\b(staging\\.|stg\\.|dev\\.|preprod\\.|test\\.)[a-z0-9\\-\\.]+\\.[a-z]{2,}\\b",
+    "keywords": ["staging", ".stg.", "preprod", "test."],
+    "tags": ["url", "staging", "environment"]
+  },
+  {
+    "name": "Dev Database Credentials",
+    "description": "Detects development database connection strings",
+    "pattern": "\\b(postgres|mysql|mongodb|redis)://(dev|development|test|local):[^@/\\s]+@[^\\s/]+\\b",
+    "keywords": ["postgres://dev", "mysql://development", "mongodb://test"],
+    "tags": ["database", "credentials", "dev"]
+  },
+  {
+    "name": "Private NPM Token",
+    "description": "Detects NPM auth tokens from .npmrc",
+    "pattern": "\\b(_authToken\\s*=\\s*(npm_[a-zA-Z0-9\\-_=]{36})|(//registry\\.npmjs\\.org/:_authToken\\s*=\\s*[a-zA-Z0-9\\-_=]{36}))\\b",
+    "keywords": ["_authToken", "registry.npmjs.org", "npm_"],
+    "tags": ["npm", "token", "javascript"]
+  },
+  {
+    "name": "Slack Webhook URL",
+    "description": "Detects Slack Incoming Webhooks",
+    "pattern": "\\bhttps:\\/\\/(hooks|api)\\.slack\\.com\\/(services|workflows)\\/T[A-Z0-9]+\\/B[A-Z0-9]+\\/[a-zA-Z0-9\\/]+\\b",
+    "keywords": ["hooks.slack.com", "api.slack.com/workflows"],
+    "tags": ["slack", "webhook", "chat"]
+  },
+  {
+    "name": "AWS Access Key",
+    "description": "Detects AWS Access Key IDs",
+    "pattern": "AKIA[0-9A-Z]{16}",
+    "keywords": ["AKIA"],
+    "tags": ["aws", "cloud", "credentials"]
+  },
+  {
+    "name": "GitHub Personal Access Token",
+    "description": "Detects GitHub PATs",
+    "pattern": "ghp_[a-zA-Z0-9]{36}",
+    "keywords": ["ghp_"],
+    "tags": ["github", "token", "vcs"]
+  },
+  {
+    "name": "Stripe API Key",
+    "description": "Detects Stripe Secret Keys",
+    "pattern": "sk_live_[a-zA-Z0-9]{24,}",
+    "keywords": ["sk_live_"],
+    "tags": ["stripe", "payment", "api"]
+  },
+  {
+    "name": "SendGrid API Key",
+    "description": "Detects SendGrid API Keys",
+    "pattern": "SG\\.[a-zA-Z0-9_-]{22}\\.[a-zA-Z0-9_-]{43}",
+    "keywords": ["SG."],
+    "tags": ["sendgrid", "email", "api"]
+  },
+  {
+    "name": "JWT Secret in Code",
+    "description": "Detects hardcoded JWT secrets",
+    "pattern": "(jwt_secret|JWT_SECRET|jwtSecret)\\s*[=:]\\s*['\"][^'\"]{8,}['\"]",
+    "keywords": ["jwt_secret", "JWT_SECRET", "jwtSecret"],
+    "tags": ["jwt", "auth", "secret"]
+  }
+]

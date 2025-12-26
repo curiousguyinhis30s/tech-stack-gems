@@ -1,0 +1,133 @@
+id: auth-bypass-check
+
+info:
+  name: Authentication Bypass / IDOR Detection
+  author: tech-stack-gems
+  severity: high
+  description: Checks for accessible user endpoints without valid authentication
+  tags: auth,idor,bypass
+
+requests:
+  - raw:
+      - |
+        GET /api/users/1 HTTP/1.1
+        Host: {{Hostname}}
+        Accept: application/json
+
+      - |
+        GET /api/admin HTTP/1.1
+        Host: {{Hostname}}
+        X-Original-URL: /admin/dashboard
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"id": 1'
+          - '"role": "admin"'
+          - '"isAdmin": true'
+        condition: or
+
+      - type: status
+        status:
+          - 200
+
+---
+
+id: ssrf-detection
+
+info:
+  name: SSRF via URL Parameter
+  author: tech-stack-gems
+  severity: critical
+  description: Attempts to fetch internal metadata via injectable URL parameter
+  tags: ssrf,oast
+
+requests:
+  - raw:
+      - |
+        GET /api/fetch?url=http://169.254.169.254/latest/meta-data/ HTTP/1.1
+        Host: {{Hostname}}
+
+      - |
+        GET /api/proxy?target=http://127.0.0.1/admin HTTP/1.1
+        Host: {{Hostname}}
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "ami-id"
+          - "instance-id"
+          - "iam/security-credentials"
+        condition: or
+
+---
+
+id: exposed-debug-endpoints
+
+info:
+  name: Exposed Debug & Actuator Endpoints
+  author: tech-stack-gems
+  severity: medium
+  description: Scans for exposed development endpoints
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/debug"
+      - "{{BaseURL}}/actuator"
+      - "{{BaseURL}}/actuator/health"
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/api/debug"
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/config"
+
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: body
+        words:
+          - '"status":"UP"'
+          - "DATABASE_URL"
+          - "API_KEY"
+          - "_links"
+        condition: or
+
+---
+
+id: exposed-admin-panels
+
+info:
+  name: Exposed Admin Panel Detection
+  author: tech-stack-gems
+  severity: high
+  description: Identifies exposed admin interfaces
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/admin"
+      - "{{BaseURL}}/admin/login"
+      - "{{BaseURL}}/wp-admin"
+      - "{{BaseURL}}/administrator"
+      - "{{BaseURL}}/dashboard"
+      - "{{BaseURL}}/phpmyadmin"
+      - "{{BaseURL}}/adminer"
+
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+
+      - type: word
+        part: body
+        words:
+          - "login"
+          - "admin"
+          - "dashboard"
+          - "password"
+        condition: or
