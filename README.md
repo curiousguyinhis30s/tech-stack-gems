@@ -1,7 +1,7 @@
 # Tech Stack Gems
-## Battle-Tested Technologies Repository
+## Battle-Tested Hackable Tools Library
 
-Your personal technology registry for the AI OS / Command Center.
+A curated collection of deeply hackable open-source tools with L3 Deep Mod enhancements.
 
 ---
 
@@ -69,37 +69,6 @@ crontab -e
 
 ---
 
-## Command Center Integration
-
-This repository is designed to integrate with the Command Center / AI OS:
-
-### As Context Reference
-```bash
-# Add to CLAUDE.md or session context
-cat TECH-STACK-REGISTRY.md
-```
-
-### As MCP Resource
-```yaml
-# Future: Register as MCP resource
-tech-stack:
-  registry: TECH-STACK-REGISTRY.md
-  scripts: scripts/
-  ansible: ansible/
-```
-
-### As Archon Knowledge
-```bash
-# Add to Archon knowledge base
-archon:manage_knowledge(
-  action="add",
-  source="file",
-  path="~/tech-stack-gems/TECH-STACK-REGISTRY.md"
-)
-```
-
----
-
 ## Technology Categories
 
 | Category | Core Stack | Learning |
@@ -125,5 +94,24 @@ When this repository is loaded as context, Claude should:
 
 ---
 
-*Part of: AI OS / Command Center*
+## Runtime
+
+This library uses **Bun** as runtime:
+```bash
+# Install dependencies
+bun install
+
+# Run development
+bun dev
+
+# Run tests
+bun test
+
+# Build
+bun run build
+```
+
+---
+
 *Version: 1.0*
+*License: MIT*

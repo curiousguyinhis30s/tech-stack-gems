@@ -1,9 +1,8 @@
 # Tech Stack Registry
 # Claude Code Reference Repository
-# Part of: Command Center / AI OS
 #
-# This file serves as the canonical reference for approved technologies.
-# Claude should consult this when making technology recommendations.
+# Canonical reference for hackable technologies.
+# Curated for maximum extensibility and developer experience.
 
 ---
 
@@ -764,5 +763,5 @@ Custom enhancement modules for hackable tools.
 ---
 
 *Registry Version: 2.0*
-*Last Updated: 2025-12-26*
-*Owner: Command Center / AI OS*
+*Last Updated: 2025-12-27*
+*License: MIT*

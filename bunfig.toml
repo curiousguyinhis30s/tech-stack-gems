@@ -1,0 +1,34 @@
+# Bun configuration for tech-stack-gems
+# https://bun.sh/docs/runtime/bunfig
+
+[install]
+# Use exact versions for reproducibility
+exact = true
+
+# Faster installs
+auto = "fallback"
+
+[install.lockfile]
+# Save lockfile for reproducibility
+save = true
+
+[run]
+# Silence bun's own output
+silent = false
+
+[test]
+# Test configuration
+coverage = true
+coverageReporter = ["text", "lcov"]
+
+# Patterns to find tests
+patterns = ["**/*.test.ts", "**/*.spec.ts"]
+
+# Ignore patterns
+ignore = ["node_modules", "dist", ".git"]
+
+[bundle]
+# Bundle settings for production
+minify = true
+target = "node"
+splitting = true
